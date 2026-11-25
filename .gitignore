@@ -1,0 +1,43 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node.js
+node_modules/
+/frontend/dist/
+
+# Рабочие данные, выгрузки и локальные копии
+/backend/data/
+/outputs/
+/_backup_pre_dsm/
+*.xlsx
+*.xls
+*.xlsb
+*.xlsm
+*.docx
+*.pptx
+*.tar.gz
+*.zip
+
+# Настройки разработчика и credentials
+.idea/
+.vscode/
+/.claude/
+/.codex/
+/.agents/
+.env
+.env.*
+/deploy/Caddyfile
+/deploy/users.caddy
+*.pem
+*.key
+*.pfx
+*.p12
+*.log
+.DS_Store
+Thumbs.db
