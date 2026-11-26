@@ -11,6 +11,7 @@ import uuid
 from datetime import date
 
 from . import cities as C
+from . import care
 from . import facilities as F
 from .calendar_ru import frequency_unit
 from .norms import CITY_NORM_DEFAULTS
@@ -103,8 +104,15 @@ def calculation_inputs(pr: dict) -> dict:
 
 
 def _mark_stale(pr: dict, result: dict) -> None:
-    needs_update = (pr["goal"]["mode"] == "none"
+    daily_update = (pr["goal"]["mode"] == "none"
                     and result.get("daily_plan_revision") != DAILY_PLAN_REVISION)
+    plans = pr.get("plans", {})
+    common_care = pr["conditions"].get("lpu_care")
+    ambulatory_update = result.get("ambulatory_revision") != care.AMBULATORY_REVISION and any(
+        (plans.get(city["slug"], {}).get("city_filters") or {}).get("lpu_care", common_care) == "ambulatory"
+        for city in pr["cities"]
+    )
+    needs_update = daily_update or ambulatory_update
     result["stale"] = needs_update or result.get("inputs") != calculation_inputs(pr)
     result["planner_updated"] = needs_update
 
@@ -350,6 +358,7 @@ def _run(pid: str) -> None:
             result = {
                 "id": version, "inputs": inputs, "stale": False, "project_mix": True,
                 "daily_plan_revision": DAILY_PLAN_REVISION,
+                "ambulatory_revision": care.AMBULATORY_REVISION,
                 "computed": time.strftime("%Y-%m-%d %H:%M"), "cities": rows,
                 **_totals(rows, has_goal, total_goal),
             }

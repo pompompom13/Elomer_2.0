@@ -4,6 +4,7 @@ import re
 from typing import Literal
 
 CareFilter = Literal["all", "ambulatory", "hospital", "mixed", "unknown"]
+AMBULATORY_REVISION = 2
 LABELS = {"ambulatory": "Амбулаторное", "hospital": "Госпитальное",
           "mixed": "Смешанное", "unknown": "Не определено"}
 
@@ -54,15 +55,18 @@ def level(facility: dict) -> str:
 
 
 def matches(actual: str, selected: str) -> bool:
-    return selected == "all" or actual == selected or (
-        actual == "mixed" and selected in ("ambulatory", "hospital")
-    )
+    return selected == "all" or actual == selected or uses_partial_count(actual, selected)
+
+
+def uses_partial_count(actual: str, selected: str) -> bool:
+    return (selected == "ambulatory" and actual in ("mixed", "unknown")
+            or selected == "hospital" and actual == "mixed")
 
 
 def count(total: int, actual: str, selected: str) -> int:
     if not matches(actual, selected):
         return 0
-    if actual != "mixed" or selected in ("all", "mixed"):
+    if not uses_partial_count(actual, selected):
         return total
     ambulatory = (3 * total + 2) // 5  # 60%, до ближайшего целого по каждой специальности
     return ambulatory if selected == "ambulatory" else total - ambulatory

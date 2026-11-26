@@ -6,14 +6,14 @@ import 'leaflet/dist/leaflet.css'
 /** Точка: [широта, долгота, …]. Цвет — по выбору вызывающего (функция от точки). */
 export type Dot = number[]
 
-/** Подпись точки по её номеру (запрос к серверу). */
-export type DotInfo = (i: number) => Promise<{ title: string; lines: string[] } | null>
+type PointPreview = { title: string; lines: string[] }
 
 interface Props {
   dots: Dot[]
   color: (d: Dot) => string
   fitKey: string
-  info?: DotInfo
+  describe: (index: number) => Promise<PointPreview | null>
+  onOpenCard: (index: number) => void
   /** Во сколько раз точка больше обычной (0 — не рисовать). Нет — все точки одного размера. */
   size?: (d: Dot) => number
 }
@@ -32,7 +32,7 @@ const CELL = 4 // ячейка индекса, px на нулевом масшт
  * 85 тыс. аптек двигаются и масштабируются без задержек. Точки заранее разложены по сетке,
  * плитка берёт только свои ячейки.
  */
-function DotsLayer({ dots, color, info, size }: { dots: Dot[]; color: (d: Dot) => string; info?: DotInfo; size?: (d: Dot) => number }) {
+function DotsLayer({ dots, color, describe, onOpenCard, size }: Omit<Props, 'fitKey'>) {
   const map = useMap()
   useEffect(() => {
     const crs = map.options.crs!
@@ -87,9 +87,8 @@ function DotsLayer({ dots, color, info, size }: { dots: Dot[]; color: (d: Dot) =
     })
     const layer = new (Layer as unknown as new (o: L.GridLayerOptions) => L.GridLayer)({ pane: 'overlayPane', updateWhenZooming: false, minZoom: 0, maxZoom: 19, zIndex: 5 })
     layer.addTo(map)
-    // клик по точке — подпись учреждения
+    // Клик выбирает ближайшую точку на текущем масштабе.
     const near = (e: L.LeafletMouseEvent) => {
-      if (!info) return null
       const p = crs.latLngToPoint(e.latlng, 0), scale = 2 ** map.getZoom()
       const rz = radius(map.getZoom())
       const tol = Math.max(7, rz * smax) / scale   // не меньше 7 px на экране
@@ -104,21 +103,43 @@ function DotsLayer({ dots, color, info, size }: { dots: Dot[]; color: (d: Dot) =
       }
       return best
     }
+    let popup: L.Popup | undefined
     const onClick = (e: L.LeafletMouseEvent) => {
       const best = near(e)
-      if (!best || !info) return
-      const d = dots[best.i]
-      const pop = L.popup({ maxWidth: 300 }).setLatLng([d[0], d[1]]).setContent('<span class="muted">Загружаю…</span>').openOn(map)
-      info(best.i).then((r) => {
-        const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!))
-        pop.setContent(r ? `<b>${esc(r.title)}</b>${r.lines.filter(Boolean).map((l) => `<br><span class="muted">${esc(l)}</span>`).join('')}` : 'Нет данных')
-      }).catch(() => pop.setContent('Не удалось загрузить — обновите карту'))
+      if (!best) return
+      const [lat, lon] = dots[best.i]
+      const content = document.createElement('div')
+      content.textContent = 'Загружаю…'
+      const preview = L.popup({ maxWidth: 300 }).setLatLng([lat, lon]).setContent(content).openOn(map)
+      popup = preview
+      void describe(best.i).then((result) => {
+        if (!map.hasLayer(preview)) return
+        if (!result) { content.textContent = 'Нет данных'; return }
+        const title = document.createElement('b')
+        title.textContent = result.title
+        content.replaceChildren(title)
+        for (const line of result.lines.filter(Boolean)) {
+          const text = document.createElement('div')
+          text.className = 'muted'
+          text.textContent = line
+          content.append(text)
+        }
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'linklike base-map-card-link'
+        button.textContent = 'Открыть карточку'
+        button.addEventListener('click', () => onOpenCard(best.i))
+        content.append(button)
+        preview.update()
+      }).catch((error: Error) => {
+        if (map.hasLayer(preview)) content.textContent = error.message || 'Не удалось загрузить описание'
+      })
     }
     const onMove = (e: L.LeafletMouseEvent) => { map.getContainer().style.cursor = near(e) ? 'pointer' : '' }
     map.on('click', onClick)
     map.on('mousemove', onMove)
-    return () => { layer.remove(); map.off('click', onClick); map.off('mousemove', onMove); map.getContainer().style.cursor = '' }
-  }, [map, dots, color, info, size])
+    return () => { popup?.remove(); layer.remove(); map.off('click', onClick); map.off('mousemove', onMove); map.getContainer().style.cursor = '' }
+  }, [map, dots, color, describe, onOpenCard, size])
   return null
 }
 
@@ -156,11 +177,11 @@ function Fit({ dots, fitKey }: { dots: Dot[]; fitKey: string }) {
 }
 
 /** Карта России с точками всех учреждений по фильтрам «Базы». */
-export function DotsMap({ dots, color, fitKey, info, size }: Props) {
+export function DotsMap({ dots, color, fitKey, describe, onOpenCard, size }: Props) {
   return (
     <MapContainer center={[58, 60]} zoom={3} scrollWheelZoom={false} preferCanvas style={{ height: '100%', width: '100%' }}>
       <TileLayer url={TILE} attribution={ATTR} />
-      <DotsLayer dots={dots} color={color} info={info} size={size} />
+      <DotsLayer dots={dots} color={color} describe={describe} onOpenCard={onOpenCard} size={size} />
       <Fit dots={dots} fitKey={fitKey} />
     </MapContainer>
   )

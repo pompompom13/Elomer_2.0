@@ -363,7 +363,7 @@ export function ProjectsView({ meta, cities, onCitiesChanged, onOpenPlan, initia
             {section === 'result' && <>
               {!res?.id ? <p className="seg-hint">{res ? 'Пересчитайте проект, чтобы получить связанную версию маршрутов и отчётов.' :
                 'Добавьте города, задайте условия и рассчитайте проект.'}</p> : <>
-                {res.stale && <div className="verdict warn" role="status">Показан расчёт от {res.computed}. {res.planner_updated ? 'Обновился расчёт визитов без цели по охвату.' : 'Условия изменились.'} Пересчитайте проект, чтобы обновить планы и отчёты.</div>}
+                {res.stale && <div className="verdict warn" role="status">Показан расчёт от {res.computed}. {res.planner_updated ? 'Обновились правила расчёта.' : 'Условия изменились.'} Пересчитайте проект, чтобы обновить планы и отчёты.</div>}
                 <div className="project-exports">
                   <button className="btn quiet" onClick={() => download('pdf')} disabled={running || !!dl}>
                     {dl === 'pdf' ? 'Готовлю PDF…' : res.stale ? 'PDF предыдущего расчёта' : 'Выгрузка PDF'}</button>

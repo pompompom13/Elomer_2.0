@@ -474,6 +474,7 @@ td.up b { color: var(--accent); }
 .allc .drop-btn, .base-filter-grid .drop-btn { min-width: 0; width: 100%; }
 .allc .drop-btn span, .base-filter-grid .drop-btn span { max-width: 100%; }
 .base-overview-map { height: var(--pane-h); }
+.base-overview-map .base-map-card-link { display: block; min-height: 32px; margin-top: 4px; font: inherit; font-weight: 600; }
 .base-table-scroll { max-height: var(--pane-h); }
 .base-table-scroll:focus-visible, .stops:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 

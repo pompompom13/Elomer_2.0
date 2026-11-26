@@ -318,16 +318,7 @@ def facility_card(slug: str, fid: str):
     f = next((x for x in annotate(ds["facilities"]) if x["id"] == fid), None)
     if f is None:
         raise HTTPException(404, "Учреждение не найдено")
-    doctors = []
-    if f["kind"] == "lpu":
-        for spec in N.SPECIALTIES:
-            n = len(N.doctors_in(f, spec, calib=calibration(slug, spec)))
-            if n:
-                doctors.append({"spec": spec, "n": n, "confirmed": int((f.get("known_doctors") or {}).get(spec, 0))})
-    keep = ("id", "name", "kind", "category", "care_level", "address", "lat", "lon", "phone", "hours", "ownership",
-            "network_name", "operator", "inn", "turnover", "source")
-    return {**{k: f.get(k) for k in keep}, "category_label": F.CATEGORY_LABELS.get(f["category"], ""),
-            "doctors": sorted(doctors, key=lambda x: -x["n"])}
+    return base_export.facility_card(f, slug)
 
 
 @app.post("/api/plan/routes")
@@ -434,12 +425,14 @@ class PointQuery(BaseModel):
     query: BaseQuery
     kind: str = "lpu"
     i: int = 0
+    revision: str | None = None
+    detail: bool = False
 
 
 @app.post("/api/base/point")
 def base_point(q: PointQuery):
     """Подпись точки на карте «Базы» (номер точки — как в /api/base/points с теми же фильтрами)."""
-    r = base_export.point_info(q.query.model_dump(), q.kind, q.i)
+    r = base_export.point_info(q.query.model_dump(), q.kind, q.i, revision=q.revision, detail=q.detail)
     if r is None:
         raise HTTPException(404, "Точка не найдена — обновите карту")
     return r

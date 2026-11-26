@@ -5,7 +5,7 @@ import { PlanMap, type MapPoint } from './PlanMap'
 import { CityStatsView } from './CityStatsView'
 import { FacilityCard } from './FacilityCard'
 import { ALL_CATEGORIES, TURNOVER_STEPS } from './FiltersPanel'
-import { CARE_LABELS, CareLevelField, countForCare, matchesCare } from './CareLevelField'
+import { CARE_LABELS, CareLevelField, countForCare, matchesCare, usesPartialCareCount } from './CareLevelField'
 import { loadEdits, patchEdits, saveEdits, type Edits } from '../store'
 import { num } from '../format'
 
@@ -52,6 +52,7 @@ export function BaseView({ meta, slug, specialty: spec0, initialClient, initialC
   const [turn, setTurn] = useState<number | null>(null)
   const [paint, setPaint] = useState<Paint>('kind')
   const [card, setCard] = useState<string | null>(null)
+  const loadCard = useCallback(() => api.facility(slug, card!), [slug, card])
   const [clients, setClients] = useState<ClientBaseItem[]>([])
   const [layers, setLayers] = useState<{ ours: boolean; client: string | null }>({ ours: !initialClient, client: initialClient })
   useEffect(() => { api.clientBases().then((l) => setClients(l.filter((c) => !c.job?.running && c.rows))).catch(() => undefined) }, [])
@@ -273,7 +274,7 @@ export function BaseView({ meta, slug, specialty: spec0, initialClient, initialC
                         <td>{f.address || <span className="muted">уточняется</span>}</td>
                         <td>
                           {f.kind === 'lpu' ? (!specialty ? <span className="muted">—</span> :
-                            f.care_level === 'mixed' && (care === 'ambulatory' || care === 'hospital')
+                            usesPartialCareCount(f.care_level, care)
                               ? <span title="Для правки общего числа врачей выберите «Все звенья»">{num(est, 0)}</span> :
                             <input type="number" min={0} max={99} value={est} aria-label={`Число врачей в ${f.name}`}
                               onChange={(e) => change(f.id, { override: e.target.value === '' ? null : Number(e.target.value) })} />
@@ -299,9 +300,10 @@ export function BaseView({ meta, slug, specialty: spec0, initialClient, initialC
       )}
 
       {card && cardF !== undefined && (
-        <FacilityCard slug={slug} id={card} specialty={specialty}
-          override={edits.overrides[card]} excluded={edits.excluded.includes(card)}
-          onOverride={(n) => change(card, { override: n })} onExclude={(off) => change(card, { off })}
+        <FacilityCard load={loadCard} specialty={specialty} editing={{
+          override: edits.overrides[card], excluded: edits.excluded.includes(card),
+          onOverride: (n) => change(card, { override: n }), onExclude: (off) => change(card, { off }),
+        }}
           onClose={() => setCard(null)} />
       )}
     </div>

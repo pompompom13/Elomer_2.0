@@ -6,16 +6,19 @@ export const CARE_LABELS: Record<CareLevel, string> = {
 }
 
 export function matchesCare(actual: CareLevel = 'unknown', selected: CareFilter) {
-  return selected === 'all' || actual === selected ||
-    (actual === 'mixed' && (selected === 'ambulatory' || selected === 'hospital'))
+  return selected === 'all' || actual === selected || usesPartialCareCount(actual, selected)
+}
+
+export function usesPartialCareCount(actual: CareLevel = 'unknown', selected: CareFilter) {
+  return (selected === 'ambulatory' && (actual === 'mixed' || actual === 'unknown')) ||
+    (selected === 'hospital' && actual === 'mixed')
 }
 
 export function countForCare(total: number, actual: CareLevel | undefined, selected: CareFilter) {
   if (!matchesCare(actual, selected)) return 0
   const ambulatory = Math.floor((3 * total + 2) / 5)
-  if (actual === 'mixed' && selected === 'ambulatory') return ambulatory
-  if (actual === 'mixed' && selected === 'hospital') return total - ambulatory
-  return total
+  if (!usesPartialCareCount(actual, selected)) return total
+  return selected === 'ambulatory' ? ambulatory : total - ambulatory
 }
 
 export function CareLevelField({ value = 'all', onChange, hint = false }: {
@@ -32,6 +35,6 @@ export function CareLevelField({ value = 'all', onChange, hint = false }: {
       <option value="mixed">Только смешанные ЛПУ</option>
       <option value="unknown">Звено не определено</option>
     </select>
-    {hint && <span id={`${id}-hint`} className="hint">В смешанных ЛПУ на амбулаторное звено приходится 60% врачей каждой специальности, на госпитальное — 40%.</span>}
+    {hint && <span id={`${id}-hint`} className="hint">Амбулаторный отбор включает 60% врачей каждой специальности в смешанных ЛПУ и ЛПУ с неопределённым звеном. В госпитальный отбор входят оставшиеся врачи смешанных ЛПУ.</span>}
   </div>
 }

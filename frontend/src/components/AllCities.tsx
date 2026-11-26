@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { api } from '../api'
 import type { BaseExportQuery, BaseQuery, BaseRow, BaseSummary, CareFilter, ClientBaseItem, CityItem, Meta, Ownership } from '../types'
 import { num, plural } from '../format'
 import { ALL_CATEGORIES, TURNOVER_STEPS } from './FiltersPanel'
-import { DotsMap, type Dot, type DotInfo } from './DotsMap'
+import { DotsMap, type Dot } from './DotsMap'
 import { CARE_LABELS, CareLevelField } from './CareLevelField'
 import { BaseExportDialog } from './BaseExportDialog'
+import { FacilityCard } from './FacilityCard'
 
 // цвета точек: учреждения города и вне городов (пригороды, область) — светлее
 const DOT = { lpu: '#2A52AD', lpuOut: '#7FA0E0', ph: '#2E86D6', phOut: '#8CC3F0' }
@@ -81,21 +82,32 @@ export function AllCities({ meta, cities, specialty, filters: f, onFiltersChange
   const [picked, setPicked] = useState<string[]>([])
   const [sort, setSort] = useState<{ k: SortKey; d: 1 | -1 }>({ k: 'population', d: -1 })
   const [metric, setMetric] = useState<MapMetric>('lpu')
-  const [pts, setPts] = useState<{ key: string; lpu: number[][]; pharmacies: number[][] } | null>(null)
+  const [pts, setPts] = useState<{ key: string; query: BaseQuery; revision: string; lpu: number[][]; pharmacies: number[][] } | null>(null)
   const [ptsBusy, setPtsBusy] = useState(false)
-  // подпись точки: номер точки — в том же запросе, по которому сервер отдал точки
-  const ptsQuery = useRef<BaseQuery | null>(null)
-  const mkInfo = (kind: 'lpu' | 'pharmacy'): DotInfo => async (i) => {
-    if (!ptsQuery.current) return null
-    const r = await api.basePoint(ptsQuery.current, kind, i)
-    const net = r.network && !r.name.toLowerCase().includes(r.network.toLowerCase()) && !r.network.toLowerCase().includes(r.name.toLowerCase()) ? r.network : ''
-    const own = net ? `${r.ownership}, сеть ${net}` : r.ownership
-    const sp = r.specialty ? ` (${r.specialty.toLowerCase()})` : ' всех специальностей'
-    const docs = r.doctors != null ? `≈ ${num(r.doctors, 0)} ${plural(r.doctors, 'врач', 'врача', 'врачей')}${sp}, оценка` : ''
-    return { title: r.name, lines: [[r.type, r.care_level && CARE_LABELS[r.care_level], own].filter(Boolean).join(' · '), docs, (r.city && !r.address.toLowerCase().includes(r.city.toLowerCase()) ? [r.city, r.address] : [r.address]).filter(Boolean).join(', ')] }
-  }
-  const infoLpu = useMemo(() => mkInfo('lpu'), [])   // eslint-disable-line react-hooks/exhaustive-deps
-  const infoPh = useMemo(() => mkInfo('pharmacy'), [])   // eslint-disable-line react-hooks/exhaustive-deps
+  const [card, setCard] = useState<{ query: BaseQuery; revision: string; kind: 'lpu' | 'pharmacy'; index: number } | null>(null)
+  const pointKind = metric === 'pharmacies' ? 'pharmacy' : 'lpu'
+  const describePoint = useCallback(async (index: number) => {
+    if (!pts) return null
+    const point = await api.basePoint(pts.query, pointKind, index, pts.revision)
+    const name = point.name.toLowerCase()
+    const network = point.network.toLowerCase()
+    const own = network && !name.includes(network) && !network.includes(name)
+      ? [point.ownership, `сеть ${point.network}`].filter(Boolean).join(', ') : point.ownership
+    const spec = point.specialty ? ` (${point.specialty.toLowerCase()})` : ' всех специальностей'
+    const doctors = point.doctors === null ? '' :
+      `≈ ${num(point.doctors, 0)} ${plural(point.doctors, 'врач', 'врача', 'врачей')}${spec}, оценка`
+    const address = point.city && !point.address.toLowerCase().includes(point.city.toLowerCase())
+      ? [point.city, point.address].filter(Boolean).join(', ') : point.address
+    return { title: point.name, lines: [
+      [point.type, point.care_level && CARE_LABELS[point.care_level], own].filter(Boolean).join(' · '),
+      doctors,
+      address,
+    ] }
+  }, [pts, pointKind])
+  const openPointCard = useCallback((index: number) => {
+    if (pts) setCard({ query: pts.query, revision: pts.revision, kind: pointKind, index })
+  }, [pts, pointKind])
+  const loadCard = useCallback(() => api.baseFacility(card!.query, card!.kind, card!.index, card!.revision), [card])
   // размер точки врачей — относительно типичного ЛПУ (90-й перцентиль): от 0,8 до 5 обычных точек
   const sizeDoc = useMemo(() => {
     const v = (pts?.lpu ?? []).map((d) => d[4] || 0).filter((x) => x > 0).sort((a, b) => a - b)
@@ -128,7 +140,7 @@ export function AllCities({ meta, cities, specialty, filters: f, onFiltersChange
     let alive = true
     setPtsBusy(true)
     const t = setTimeout(() => {
-      api.basePoints(query).then((p) => { if (alive) { ptsQuery.current = query; setPts({ key, ...p }) } })
+      api.basePoints(query).then((p) => { if (alive) setPts({ key, query, ...p }) })
         .catch((e) => alive && setErr((e as Error).message)).finally(() => alive && setPtsBusy(false))
     }, 400)
     return () => { alive = false; clearTimeout(t) }
@@ -338,7 +350,7 @@ export function AllCities({ meta, cities, specialty, filters: f, onFiltersChange
                 <DotsMap dots={metric === 'pharmacies' ? pts.pharmacies : pts.lpu}
                   color={metric === 'doctors' ? dotDoc : metric === 'lpu' ? dotLpu : dotPh}
                   size={metric === 'doctors' ? sizeDoc : undefined}
-                  fitKey={`${f.scope}-${(f.sel ?? []).join(',')}`} info={metric === 'pharmacies' ? infoPh : infoLpu} />
+                  fitKey={`${f.scope}-${(f.sel ?? []).join(',')}`} describe={describePoint} onOpenCard={openPointCard} />
               ) : null}
               {ptsBusy && <div className="map-busy">Загружаю точки…</div>}
             </div>
@@ -418,6 +430,7 @@ export function AllCities({ meta, cities, specialty, filters: f, onFiltersChange
           </section>
         </div>
       )}
+      {card && <FacilityCard load={loadCard} specialty={card.query.specialty} onClose={() => setCard(null)} />}
       {exportSettings && <BaseExportDialog query={exportSettings.query} specialties={meta.specialties}
         onClose={() => setExportSettings(null)} onDownload={(q) => download(q, exportSettings.tag)} />}
     </div>

@@ -1,31 +1,35 @@
-import { useEffect, useState } from 'react'
-import { api } from '../api'
+import { useEffect, useRef, useState } from 'react'
 import type { FacilityCard as Card } from '../types'
 import { num } from '../format'
 import { CARE_LABELS } from './CareLevelField'
 
 interface Props {
-  slug: string
-  id: string
+  load: () => Promise<Card>
   specialty: string
-  override?: number
-  excluded: boolean
-  onOverride: (n: number | null) => void
-  onExclude: (off: boolean) => void
+  editing?: {
+    override?: number
+    excluded: boolean
+    onOverride: (n: number | null) => void
+    onExclude: (off: boolean) => void
+  }
   onClose: () => void
 }
 
-const SRC: Record<string, string> = { osm: 'карта', import: 'импорт', field: 'данные визитов', registry: 'реестр аптек' }
+const SRC: Record<string, string> = { osm: 'карта', import: 'импорт', field: 'данные визитов', registry: 'реестр аптек', dsm: 'реестр ЛПУ', client: 'база заказчика' }
 
 /** Карточка учреждения: сведения, врачи по специальностям, правки для плана. */
-export function FacilityCard({ slug, id, specialty, override, excluded, onOverride, onExclude, onClose }: Props) {
+export function FacilityCard({ load, specialty, editing, onClose }: Props) {
   const [c, setC] = useState<Card | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const close = useRef<HTMLButtonElement>(null)
+  useEffect(() => { close.current?.focus() }, [])
   useEffect(() => {
+    let active = true
     setC(null)
     setErr(null)
-    api.facility(slug, id).then(setC).catch((e) => setErr((e as Error).message))
-  }, [slug, id])
+    load().then((card) => { if (active) setC(card) }).catch((e) => { if (active) setErr((e as Error).message) })
+    return () => { active = false }
+  }, [load])
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
     window.addEventListener('keydown', k)
@@ -35,16 +39,17 @@ export function FacilityCard({ slug, id, specialty, override, excluded, onOverri
   const est = c?.doctors.find((d) => d.spec === specialty)?.n ?? 0
   return (
     <aside className="fcard" role="dialog" aria-label="Карточка учреждения">
-      <button className="fcard-x" onClick={onClose} aria-label="Закрыть">×</button>
+      <button ref={close} className="fcard-x" onClick={onClose} aria-label="Закрыть">×</button>
       {err && <div className="error">{err}</div>}
       {!c && !err && <div className="loading">Загружаю…</div>}
       {c && (
         <>
           <div className="fcard-kind"><span className={`dot ${c.kind}`} />{c.category_label || (c.kind === 'pharmacy' ? 'Аптека' : 'ЛПУ')}
-            {' · '}{c.ownership === 'state' ? 'государственная' : 'частная'}</div>
+            {c.ownership && (c.ownership === 'state' ? ' · государственная' : ' · частная')}</div>
           <h2>{c.name}</h2>
           <dl className="fcard-dl">
             {c.care_level && <><dt>Звено ЛПУ</dt><dd>{CARE_LABELS[c.care_level]}</dd></>}
+            {c.settlement && <><dt>Нас. пункт</dt><dd>{c.settlement}</dd></>}
             <dt>Адрес</dt><dd>{c.address || '—'}</dd>
             {c.network_name && <><dt>Сеть</dt><dd>{c.network_name}</dd></>}
             {c.operator && <><dt>Юрлицо</dt><dd>{c.operator}{c.inn ? `, ИНН ${c.inn}` : ''}</dd></>}
@@ -54,19 +59,19 @@ export function FacilityCard({ slug, id, specialty, override, excluded, onOverri
             <dt>Источник</dt><dd>{SRC[c.source] ?? c.source}</dd>
           </dl>
 
-          <label className="chk fcard-in">
-            <input type="checkbox" checked={!excluded} onChange={(e) => onExclude(!e.target.checked)} />
+          {editing && <label className="chk fcard-in">
+            <input type="checkbox" checked={!editing.excluded} onChange={(e) => editing.onExclude(!e.target.checked)} />
             Учитывать в плане
-          </label>
+          </label>}
 
           {c.kind === 'lpu' && (
             <>
-              {specialty && <div className="field fcard-ov">
+              {specialty && editing && <div className="field fcard-ov">
                 <label htmlFor="fc-ov">{specialty}ов для плана</label>
-                <input id="fc-ov" type="number" min={0} max={99} value={override ?? est}
-                  onChange={(e) => onOverride(e.target.value === '' ? null : Number(e.target.value))} />
-                {override !== undefined && override !== est && (
-                  <button className="linklike" onClick={() => onOverride(null)}>вернуть оценку ({est})</button>
+                <input id="fc-ov" type="number" min={0} max={99} value={editing.override ?? est}
+                  onChange={(e) => editing.onOverride(e.target.value === '' ? null : Number(e.target.value))} />
+                {editing.override !== undefined && editing.override !== est && (
+                  <button className="linklike" onClick={() => editing.onOverride(null)}>вернуть оценку ({est})</button>
                 )}
               </div>}
               <h3>Врачи по специальностям</h3>

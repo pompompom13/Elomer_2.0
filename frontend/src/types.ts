@@ -330,6 +330,7 @@ export interface FacilityCard {
   category: string
   category_label: string
   address: string
+  settlement?: string
   lat: number
   lon: number
   phone?: string

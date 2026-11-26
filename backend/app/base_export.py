@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 from collections import Counter, defaultdict
+from hashlib import blake2s
 
 from openpyxl import Workbook
 from openpyxl.cell import WriteOnlyCell
@@ -55,10 +56,14 @@ def alld_save() -> None:
 _alld_load()
 
 
+def _care_cache_key(selected: str) -> str:
+    return f"ambulatory-v{care.AMBULATORY_REVISION}" if selected == "ambulatory" else selected
+
+
 def _all_docs_city(slug: str, facilities: list[dict], selected: str = "all") -> dict[str, int]:
     st = F.city_path(slug).stat().st_mtime
     split = selected in ("ambulatory", "hospital")
-    key = f"{slug}:{selected}" if split else slug
+    key = f"{slug}:{_care_cache_key(selected)}" if split else slug
     hit = _alld_city.get(key)
     if hit and hit[0] == st:
         return hit[1]
@@ -72,7 +77,7 @@ def _all_docs_city(slug: str, facilities: list[dict], selected: str = "all") -> 
         actual = care.level(f)
         if split and not care.matches(actual, selected):
             continue
-        if split and actual != "mixed":
+        if split and not care.uses_partial_count(actual, selected):
             res[f["id"]] = totals.get(f["id"], 0)
             continue
         res[f["id"]] = sum(care.count(len(N.doctors_in(f, s, calib=cals[s])), actual, selected)
@@ -83,7 +88,7 @@ def _all_docs_city(slug: str, facilities: list[dict], selected: str = "all") -> 
 
 def _all_docs_out(f: dict, slug: str | None, selected: str) -> int:
     actual = care.level(f)
-    key = (f["id"], f"{slug or ''}:{selected}" if actual == "mixed" and selected in ("ambulatory", "hospital") else slug)
+    key = (f["id"], f"{slug or ''}:{_care_cache_key(selected)}" if care.uses_partial_count(actual, selected) else slug)
     if key not in _alld_out:
         n = 0
         for s in N.SPECIALTIES:
@@ -96,7 +101,7 @@ def _all_docs_out(f: dict, slug: str | None, selected: str) -> int:
     return _alld_out[key]
 
 
-def _selected(q: dict, doctor_specs: tuple[str, ...] | None = None):
+def _selected(q: dict, doctor_specs: tuple[str, ...] | None = None, *, point_context: bool = False):
     """Учреждения с учётом фильтров, по одной строке сводки за раз.
 
     scope: «city» — только города; «suburbs» — город с пригородом; «region» — область целиком
@@ -181,6 +186,9 @@ def _selected(q: dict, doctor_specs: tuple[str, ...] | None = None):
                                  for s, c in cals.items()}
         overrides = {s: CB.doctor_counts(facilities, slug, s, calib=cals[s]) for s in count_specs} if client else {}
         fac = keep(facilities, cals, overrides)
+        if point_context:
+            for f in fac:
+                f["_point_slug"] = slug
         if not all_doctors:
             return fac
         if not client:
@@ -198,6 +206,9 @@ def _selected(q: dict, doctor_specs: tuple[str, ...] | None = None):
     def outside_fac(items: list[dict], slug: str | None) -> list[dict]:
         # у пригородов своей статистики врачей нет — коэффициент ближайшего города
         fac = keep(annotate([dict(f) for f in items]), nearby_cals.get(slug, {}), {})
+        if point_context:
+            for f in fac:
+                f["_point_slug"] = slug
         if not spec and doctor_specs is None:
             for f in fac:
                 if f["kind"] == "lpu":
@@ -250,8 +261,11 @@ def _key(q: dict) -> str:
     """Ключ кеша: «все типы ЛПУ» списком и без списка — один и тот же запрос."""
     import json as _json
     q = dict(q)
-    if q.get("lpu_care", "all") == "all":
+    selected = q.get("lpu_care", "all")
+    if selected == "all":
         q.pop("lpu_care", None)
+    elif selected == "ambulatory":
+        q["lpu_care"] = _care_cache_key(selected)
     if q.get("categories") and set(CATS_LPU) <= set(q["categories"]):
         q["categories"] = None
     for k in ("kinds", "lpu_ownership", "pharmacy_ownership"):
@@ -308,28 +322,30 @@ def totals(q: dict) -> dict:
             "doctors": t.get("doctors_all", t.get("doctors", 0)) if t else None}
 
 
-_pts_cache: dict[str, tuple[float, dict]] = {}
-_pts_meta: dict[str, list] = {}   # ключ → [lpu, аптеки]: подписи точек в том же порядке, что точки
+_pts_cache: dict[str, tuple[tuple, dict, list[list[tuple]]]] = {}
 
 
 def points(q: dict) -> dict:
     """Все учреждения по фильтрам для карты России: [широта, долгота, тип] — компактно, с кешем."""
-    import json as _json
+    return _point_snapshot(q)[0]
+
+
+def _point_snapshot(q: dict) -> tuple[dict, list[list[tuple]]]:
     from . import territory as _T
-    stamp = max((m for _, m in _T._stamp()), default=0.0)
+    stamp = _T._stamp()
     key = _key(q)
     hit = _pts_cache.get(key)
     if hit and hit[0] == stamp:
-        return hit[1]
+        return hit[1], hit[2]
     cats = {c: i for i, c in enumerate(CATS_LPU + ["ambulatory"])}
     lpu, ph, m_lpu, m_ph = [], [], [], []
-    for city, _, fac in _selected(q):   # врачи в ЛПУ — по выбранной специальности или всех
+    for city, _, fac in _selected(q, point_context=True):
         for f in fac:
             if f.get("lat") is None:
                 continue
             info = (f["name"], f.get("address") or "", f["category"], f.get("settlement") if f.get("outside") else (f.get("_city") or city),
                     f.get("ownership", ""), f.get("network_name") or f.get("brand") or "", int(f.get("est") or 0),
-                    f.get("care_level"))
+                    f.get("care_level"), f["id"], f.get("_point_slug"), bool(f.get("outside")))
             if f["kind"] == "lpu":
                 lpu.append([round(f["lat"], 4), round(f["lon"], 4), cats.get(f["category"], 0), 1 if f.get("outside") else 0,
                             int(f.get("est") or 0)])
@@ -337,26 +353,74 @@ def points(q: dict) -> dict:
             else:
                 ph.append([round(f["lat"], 4), round(f["lon"], 4), 1 if f["ownership"] == "state" else 0, 1 if f.get("outside") else 0])
                 m_ph.append(info)
-    res = {"lpu": lpu, "pharmacies": ph}
+    revision = blake2s(repr((key, stamp)).encode(), digest_size=16).hexdigest()
+    res = {"lpu": lpu, "pharmacies": ph, "revision": revision}
+    meta = [m_lpu, m_ph]
     if len(_pts_cache) > 16:
         _pts_cache.clear()
-        _pts_meta.clear()
-    _pts_cache[key] = (stamp, res)
-    _pts_meta[key] = [m_lpu, m_ph]
-    return res
+    _pts_cache[key] = (stamp, res, meta)
+    return res, meta
 
 
-def point_info(q: dict, kind: str, i: int) -> dict | None:
-    """Подпись точки карты: название, адрес, тип, город."""
-    points(q)
-    meta = _pts_meta.get(_key(q))
-    lst = (meta or [[], []])[0 if kind == "lpu" else 1]
+def point_info(q: dict, kind: str, i: int, *, revision: str | None = None, detail: bool = False) -> dict | None:
+    """Получить сведения о точке из той же версии карты, которую видит пользователь."""
+    snapshot, meta = _point_snapshot(q)
+    if revision is not None and snapshot["revision"] != revision:
+        return None
+    lst = meta[0 if kind == "lpu" else 1]
     if not 0 <= i < len(lst):
         return None
-    name, addr, cat, city, own, net, docs, actual = lst[i]
-    return {"name": name, "address": addr, "type": F.CATEGORY_LABELS.get(cat, cat), "city": city or "",
+    name, addr, cat, city, own, net, docs, actual, fid, slug, outside = lst[i]
+    info = {"name": name, "address": addr, "type": F.CATEGORY_LABELS.get(cat, cat), "city": city or "",
             "ownership": OWN.get(own, ""), "network": net, "doctors": docs if kind == "lpu" else None,
             "specialty": q.get("specialty") or "", "care_level": actual}
+    if detail:
+        facility = _point_facility(fid, slug, outside, q.get("client_base"))
+        if facility is None:
+            return None
+        facility.update(category=cat, care_level=actual, ownership=own, network_name=net)
+        info["facility"] = facility_card(facility, slug) | {"settlement": city or ""}
+    return info
+
+
+def _point_facility(fid: str, slug: str | None, outside: bool, client: str | None) -> dict | None:
+    if outside:
+        from . import territory
+        facilities, _ = territory.outside()
+    else:
+        if not slug:
+            return None
+        try:
+            ds = F.load_city(slug)
+            if client:
+                from . import client_bases
+                ds = client_bases.with_client(ds, client)
+            facilities = ds["facilities"]
+        except (KeyError, FileNotFoundError):
+            return None
+    return next((dict(f) for f in facilities if f["id"] == fid), None)
+
+
+def facility_card(f: dict, slug: str | None) -> dict:
+    """Карточка учреждения из города или регионального справочника."""
+    doctors = []
+    if f["kind"] == "lpu":
+        client_doctors = f.get("client_doctors") or {}
+        known = f.get("known_doctors") or {}
+        for spec in N.SPECIALTIES:
+            n = client_doctors.get(spec)
+            if n is None:
+                cal = calibration(slug, spec) if slug else None
+                counts = (cal or {}).get("counts") or {}
+                n = counts.get(f["ours_id"]) if f.get("ours_id") else None
+                if n is None:
+                    n = len(N.doctors_in(f, spec, calib=cal))
+            if n:
+                doctors.append({"spec": spec, "n": n, "confirmed": int(known.get(spec, 0))})
+    keep = ("id", "name", "kind", "category", "care_level", "address", "lat", "lon", "phone", "hours", "ownership",
+            "network_name", "operator", "inn", "turnover", "source")
+    return {**{k: f.get(k) for k in keep}, "category_label": F.CATEGORY_LABELS.get(f["category"], ""),
+            "doctors": sorted(doctors, key=lambda x: -x["n"])}
 
 
 def summary(q: dict) -> dict:

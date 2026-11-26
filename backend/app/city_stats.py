@@ -38,7 +38,7 @@ def city_stats(slug: str, selected: care.CareFilter = "all", client: str = "") -
         cal = calibration(slug, spec)
         overrides = CB.doctor_counts(ds["facilities"], slug, spec) if client else {}
         confirmed = sum(int((f.get("known_doctors") or {}).get(spec, 0)) for f in lpu
-                        if f["care_level"] != "mixed" or selected in ("all", "mixed"))
+                        if not care.uses_partial_count(f["care_level"], selected))
         estimate = int(cal["target"] or 0) if selected == "all" and not client else sum(
             care.count(len(N.doctors_in(f, spec, overrides, cal)), f["care_level"], selected) for f in lpu
         )

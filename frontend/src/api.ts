@@ -75,9 +75,11 @@ export const api = {
   baseSummary: (q: BaseQuery) => req<BaseSummary>('/api/base/summary', json(q)),
   /** точки всех учреждений по фильтрам: [широта, долгота, тип/собственность, вне города] */
   baseTotals: () => req<{ fresh: boolean; lpu: number | null; pharmacies: number | null; doctors: number | null }>('/api/base/totals'),
-  basePoint: (query: BaseQuery, kind: 'lpu' | 'pharmacy', i: number) =>
-    req<{ name: string; address: string; type: string; city: string; ownership: string; network: string; doctors: number | null; specialty: string; care_level: CareLevel | null }>('/api/base/point', json({ query, kind, i })),
-  basePoints: (q: BaseQuery) => req<{ lpu: number[][]; pharmacies: number[][] }>('/api/base/points', json(q)),
+  basePoint: (query: BaseQuery, kind: 'lpu' | 'pharmacy', i: number, revision: string) =>
+    req<{ name: string; address: string; type: string; city: string; ownership: string; network: string; doctors: number | null; specialty: string; care_level: CareLevel | null }>('/api/base/point', json({ query, kind, i, revision })),
+  baseFacility: (query: BaseQuery, kind: 'lpu' | 'pharmacy', i: number, revision: string) =>
+    req<{ facility: FacilityCard }>('/api/base/point', json({ query, kind, i, revision, detail: true })).then(r => r.facility),
+  basePoints: (q: BaseQuery) => req<{ lpu: number[][]; pharmacies: number[][]; revision: string }>('/api/base/points', json(q)),
   async downloadBase(q: BaseExportQuery) {
     const r = await fetch('/api/base/xlsx', json(q))
     if (!r.ok) throw new Error('Не удалось сформировать файл')
